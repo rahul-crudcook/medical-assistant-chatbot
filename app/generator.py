@@ -1,68 +1,53 @@
 # app/generator.py
-"""LLM loader and generator (Transformers on MPS/CPU for macOS)."""
+"""LLM generator using the Hugging Face Inference API."""
 
 from __future__ import annotations
-
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
+import os
+import requests
 from .config import AppConfig
 
 
 class ModelGenerator:
-    """Load the model once and provide a typed generate() API using Transformers."""
+    """Uses the Hugging Face Inference API to generate text."""
 
     def __init__(self, cfg: AppConfig) -> None:
         self._cfg = cfg
-        self._device = self._detect_device()
-        self._model, self._tokenizer = self._load_model()
+        # Securely get the API token from environment secrets (like HF Space secrets)
+        self._api_token = os.environ.get("HF_TOKEN")
+        if not self._api_token:
+            raise ValueError("HF_TOKEN secret not found. Please add it to your Space's Settings tab.")
 
-    def _detect_device(self) -> str:
-        # Prefer Apple GPU (MPS) if available, else CPU
-        if torch.backends.mps.is_available():
-            return "mps"
-        return "cpu"
-
-    def _load_model(self):
-        # For 7B models on Mac, use float16 on MPS if possible, otherwise bfloat16/float32.
-        dtype = torch.float16 if self._device == "mps" else torch.float32
-
-        tokenizer = AutoTokenizer.from_pretrained(
-            self._cfg.model_name,
-            use_fast=True,
-            trust_remote_code=False,
-        )
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-
-        model = AutoModelForCausalLM.from_pretrained(
-            self._cfg.model_name,
-            torch_dtype=dtype,
-            low_cpu_mem_usage=True,
-            device_map=None,  # we move it manually
-            trust_remote_code=False,
-        )
-        model = model.to(self._device)
-        model.eval()
-        return model, tokenizer
+        self._api_url = f"https://api-inference.huggingface.co/models/{self._cfg.model_name}"
+        self._headers = {"Authorization": f"Bearer {self._api_token}"}
 
     def generate(self, prompt: str) -> str:
-        """Return the raw model completion text (post [/INST])."""
-        inputs = self._tokenizer(prompt, return_tensors="pt", padding=True)
-        # MPS needs .to("mps"); CPU will ignore safely.
-        inputs = {k: v.to(self._device) for k, v in inputs.items()}
+        """Sends a prompt to the HF Inference API and returns the model's response."""
 
-        with torch.no_grad():
-            outputs = self._model.generate(
-                **inputs,
-                max_new_tokens=self._cfg.max_new_tokens,
-                do_sample=True,
-                temperature=self._cfg.temperature,
-                top_p=self._cfg.top_p,
-                repetition_penalty=self._cfg.repetition_penalty,
-                eos_token_id=self._tokenizer.eos_token_id,
-                pad_token_id=self._tokenizer.pad_token_id,
-            )
+        payload = {
+            "inputs": prompt,
+            "parameters": {
+                "max_new_tokens": self._cfg.max_new_tokens,
+                "temperature": self._cfg.temperature,
+                "top_p": self._cfg.top_p,
+                "repetition_penalty": self._cfg.repetition_penalty,
+                "do_sample": True,
+            },
+        }
 
-        full = self._tokenizer.decode(outputs[0], skip_special_tokens=True)
-        return full.split("[/INST]")[-1].strip()
+        response = requests.post(self._api_url, headers=self._headers, json=payload)
+
+        if response.status_code == 200:
+            full_response = response.json()[0]['generated_text']
+            # The API often returns the full prompt in its response, so we strip it out.
+            if "[/INST]" in full_response:
+                return full_response.split("[/INST]")[-1].strip()
+            # Fallback if the prompt structure changes
+            if full_response.strip().startswith(prompt.strip()):
+                return full_response[len(prompt) :].strip()
+            return full_response.strip()
+
+        elif "currently loading" in response.text:
+            return "The model is currently warming up. Please wait a moment and try your query again."
+
+        else:
+            return f"Error: API call failed with status {response.status_code}. Response: {response.text}"
