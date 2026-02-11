@@ -1,3 +1,5 @@
+# requirements.txt
+
 torch
 transformers
 accelerate
@@ -6,3 +8,4 @@ safetensors
 huggingface-hub
 tokenizers
 streamlit
+requests

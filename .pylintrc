@@ -1,17 +1,14 @@
 [MASTER]
 load-plugins = pylint.extensions.docparams
 extension-pkg-whitelist=
-ignore-patterns=__init__.py
+ignore-patterns=init.py
 
 [MESSAGES CONTROL]
 disable=
-  C0114,  ; missing-module-docstring (we keep docstrings on public modules)
-  C0115,  ; missing-class-docstring (we add meaningful ones below)
-  C0116,  ; missing-function-docstring (kept where relevant)
-  R0903   ; too-few-public-methods (ok for data containers)
+C0114,  ; missing-module-docstring (we keep docstrings on public modules)
+C0115,  ; missing-class-docstring (we add meaningful ones below)
+C0116,  ; missing-function-docstring (kept where relevant)
+R0903   ; too-few-public-methods (ok for data containers)
 
 [FORMAT]
 max-line-length=100
-
-[TYPECHECK]
-ignored-modules=torch,transformers,unsloth
